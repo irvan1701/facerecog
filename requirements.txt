@@ -1,6 +1,6 @@
 streamlit
 opencv-python
-dlib
+dlib-bin
 numpy
 scikit-learn
 pillow
