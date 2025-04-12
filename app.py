@@ -3,83 +3,84 @@ import cv2
 import dlib
 import numpy as np
 import pickle
-import time
+from streamlit_webrtc import webrtc_streamer, VideoTransformerBase
+from streamlit_autorefresh import st_autorefresh
 
-# Load model yang sudah dilatih (ganti dengan path model Anda)
-with open('svm_model.pkl', 'rb') as model_file:
+# Load model yang sudah dilatih
+with open("svm_model.pkl", "rb") as model_file:
     svm = pickle.load(model_file)
 
-with open('label_encoder.pkl', 'rb') as le_file:
+with open("label_encoder.pkl", "rb") as le_file:
     label_encoder = pickle.load(le_file)
 
-# Initialize dlib's face detector and shape predictor
+# Debug: Tampilkan label dari model
+print("Label dari model:", label_encoder.classes_)
+
+# Inisialisasi face detector dan shape predictor
 detector = dlib.get_frontal_face_detector()
-sp = dlib.shape_predictor('shape_predictor_68_face_landmarks.dat')  # Ganti dengan path predictor Anda
+sp = dlib.shape_predictor("shape_predictor_68_face_landmarks.dat")
+face_rec_model = dlib.face_recognition_model_v1("dlib_face_recognition_resnet_model_v1.dat")
 
-# Initialize a set to store the names of detected faces
-detected_names = set()
+# Class untuk deteksi dan prediksi wajah
+class FaceRecognitionTransformer(VideoTransformerBase):
+    def __init__(self):
+        self.detected_names = set()
 
-# Streamlit UI
-st.title('Face Recognition for Attendance')
+    def recv(self, frame):
+        img = frame.to_ndarray(format="bgr24")
+        if img is None:
+            print("Frame kosong")
+            return img
 
-# Menampilkan instruksi di Streamlit
-st.write("Menunggu deteksi wajah...")
-
-# Kondisi untuk menjalankan kode kamera hanya jika di lingkungan yang mendukungnya
-cap = None
-if 'camera_available' in st.session_state and st.session_state.camera_available:
-    try:
-        cap = cv2.VideoCapture(0)
-        if not cap.isOpened():
-            raise ValueError("Camera not accessible.")
-    except Exception as e:
-        st.warning(f"Camera error: {e}")
-        cap = None  # Tidak ada kamera, set cap ke None
-
-# Menangani deteksi wajah (Jika kamera tidak ada, bisa diganti dengan input statis)
-if cap:
-    stframe = st.empty()  # Tempatkan frame untuk menampilkan hasil deteksi wajah
-    while True:
-        success, frame = cap.read()
-        if not success:
-            st.warning("Gagal membaca frame dari kamera.")
-            break
-        
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        rgb_frame = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         faces = detector(rgb_frame)
+        print("Jumlah wajah terdeteksi:", len(faces))
 
-        detected_names.clear()
+        self.detected_names.clear()
 
         for face in faces:
-            shape = sp(rgb_frame, face)
-            face_descriptor = dlib.face_descriptor(rgb_frame, shape)
-            face_descriptor = np.array(face_descriptor).reshape(1, -1)
+            try:
+                shape = sp(rgb_frame, face)
+                face_descriptor = np.array(face_rec_model.compute_face_descriptor(rgb_frame, shape)).reshape(1, -1)
 
-            # Prediksi menggunakan SVM dan LabelEncoder
-            pred_label = svm.predict(face_descriptor)[0]
-            pred_name = label_encoder.inverse_transform([pred_label])[0]
+                pred_label = svm.predict(face_descriptor)[0]
+                pred_name = label_encoder.inverse_transform([pred_label])[0]
+                print("Nama terdeteksi:", pred_name)
 
-            detected_names.add(pred_name)
+                self.detected_names.add(pred_name)
 
-            # Gambar kotak wajah dan nama di frame
-            x1, y1, x2, y2 = face.left(), face.top(), face.right(), face.bottom()
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            cv2.putText(frame, pred_name, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                # Gambar kotak dan nama
+                x1, y1, x2, y2 = face.left(), face.top(), face.right(), face.bottom()
+                cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                cv2.putText(img, pred_name, (x1, y1 - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
-        # Menampilkan hasil di Streamlit
-        stframe.image(frame, channels="RGB", use_column_width=True)
+            except Exception as e:
+                print("Error saat deskripsi wajah:", e)
 
-        # Tampilkan daftar nama yang terdeteksi
-        st.subheader("Nama yang terdeteksi:")
-        for name in detected_names:
-            st.write(name)
+        return img
 
-        # Beri waktu untuk refresh agar frame tidak terlalu cepat (opsional)
-        time.sleep(0.1)
+# Streamlit UI
+st.set_page_config(page_title="Face Recognition Attendance", layout="centered")
+st.title("🎥 Face Recognition for Attendance")
+st.write("Arahkan wajah ke kamera...")
 
-    cap.release()
-else:
-    st.warning("Tidak ada akses ke kamera, menggunakan input statis atau file.")
+ctx = webrtc_streamer(
+    key="face-recognition",
+    video_processor_factory=FaceRecognitionTransformer,
+    media_stream_constraints={"video": True, "audio": False},
+    async_processing=True,
+)
 
-# Hapus jendela OpenCV jika ada (tidak dibutuhkan dalam headless environment)
-# cv2.destroyAllWindows()  # Hapus ini untuk deployment headless
+# Auto-refresh setiap 1000 ms (1 detik)
+st_autorefresh(interval=1000, key="refresh")
+
+# Tampilkan nama-nama yang terdeteksi
+if ctx.video_processor:
+    st.subheader("🧑‍🤝‍🧑 Nama yang terdeteksi:")
+    names = list(ctx.video_processor.detected_names)
+    if names:
+        for name in names:
+            st.success(f"✔️ {name}")
+    else:
+        st.info("Belum ada wajah yang dikenali.")
