@@ -2,24 +2,26 @@ import streamlit as st
 import cv2
 import dlib
 import numpy as np
-import pickle
 from streamlit_webrtc import webrtc_streamer, VideoTransformerBase
-from streamlit_autorefresh import st_autorefresh
-
-# Load model yang sudah dilatih
-with open("svm_model.pkl", "rb") as model_file:
-    svm = pickle.load(model_file)
-
-with open("label_encoder.pkl", "rb") as le_file:
-    label_encoder = pickle.load(le_file)
-
-# Debug: Tampilkan label dari model
-print("Label dari model:", label_encoder.classes_)
+from collections import defaultdict
 
 # Inisialisasi face detector dan shape predictor
 detector = dlib.get_frontal_face_detector()
 sp = dlib.shape_predictor("shape_predictor_68_face_landmarks.dat")
 face_rec_model = dlib.face_recognition_model_v1("dlib_face_recognition_resnet_model_v1.dat")
+
+# Dataset wajah yang sudah ada (contoh data manual)
+# Biasanya data ini adalah hasil ekstraksi fitur wajah yang sebelumnya telah disimpan dalam array
+known_face_descriptors = [
+    # Contoh: deskriptor wajah orang yang sudah ada
+    np.random.rand(128),  # Representasi wajah orang 1
+    np.random.rand(128)   # Representasi wajah orang 2
+]
+
+known_face_names = [
+    "Person 1",
+    "Person 2"
+]
 
 # Class untuk deteksi dan prediksi wajah
 class FaceRecognitionTransformer(VideoTransformerBase):
@@ -34,20 +36,22 @@ class FaceRecognitionTransformer(VideoTransformerBase):
 
         rgb_frame = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         faces = detector(rgb_frame)
-        print("Jumlah wajah terdeteksi:", len(faces))
 
         self.detected_names.clear()
 
         for face in faces:
             try:
                 shape = sp(rgb_frame, face)
-                face_descriptor = np.array(face_rec_model.compute_face_descriptor(rgb_frame, shape)).reshape(1, -1)
+                face_descriptor = np.array(face_rec_model.compute_face_descriptor(rgb_frame, shape))
 
-                pred_label = svm.predict(face_descriptor)[0]
-                pred_name = label_encoder.inverse_transform([pred_label])[0]
-                print("Nama terdeteksi:", pred_name)
+                # Mencocokkan deskriptor wajah dengan dataset wajah yang sudah ada
+                distances = np.linalg.norm(known_face_descriptors - face_descriptor, axis=1)
+                min_distance_index = np.argmin(distances)
 
-                self.detected_names.add(pred_name)
+                # Jika jarak lebih kecil dari threshold, deteksi wajah sesuai nama
+                if distances[min_distance_index] < 0.6:  # Threshold untuk kecocokan wajah
+                    pred_name = known_face_names[min_distance_index]
+                    self.detected_names.add(pred_name)
 
                 # Gambar kotak dan nama
                 x1, y1, x2, y2 = face.left(), face.top(), face.right(), face.bottom()
@@ -71,9 +75,6 @@ ctx = webrtc_streamer(
     media_stream_constraints={"video": True, "audio": False},
     async_processing=True,
 )
-
-# Auto-refresh setiap 1000 ms (1 detik)
-st_autorefresh(interval=1000, key="refresh")
 
 # Tampilkan nama-nama yang terdeteksi
 if ctx.video_processor:
