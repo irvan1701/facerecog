@@ -2,6 +2,5 @@ streamlit
 opencv-python
 dlib-bin
 numpy
-pickle5
 streamlit-webrtc
 streamlit-autorefresh
