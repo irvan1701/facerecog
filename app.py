@@ -6,7 +6,7 @@ import pickle
 import time
 
 # Load model yang sudah dilatih (ganti dengan path model Anda)
-with open('model_svm.pkl', 'rb') as model_file:
+with open('svm_model.pkl', 'rb') as model_file:
     svm = pickle.load(model_file)
 
 with open('label_encoder.pkl', 'rb') as le_file:
